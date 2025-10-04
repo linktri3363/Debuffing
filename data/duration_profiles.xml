@@ -1,0 +1,25 @@
+<?xml version="1.1" ?>
+<settings>
+    <global>
+        <craftingseller>
+            <profiles>
+
+            </profiles>
+        </craftingseller>
+        <judgespedd>
+            <profiles>
+
+            </profiles>
+        </judgespedd>
+        <juggernautblack>
+            <profiles>
+
+            </profiles>
+        </juggernautblack>
+        <linktri>
+            <profiles>
+
+            </profiles>
+        </linktri>
+    </global>
+</settings>

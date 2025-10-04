@@ -1,0 +1,53 @@
+<?xml version="1.1" ?>
+<settings>
+    <global>
+        <auto_profiles_enabled>false</auto_profiles_enabled>
+        <auto_update_enabled>false</auto_update_enabled>
+        <bg>
+            <alpha>255</alpha>
+            <blue>0</blue>
+            <green>0</green>
+            <red>0</red>
+            <visible>true</visible>
+        </bg>
+        <colors_enabled>true</colors_enabled>
+        <flags>
+            <bold>false</bold>
+            <bottom>false</bottom>
+            <draggable>true</draggable>
+            <italic>false</italic>
+            <right>false</right>
+        </flags>
+        <keep_buff_after_timer>false</keep_buff_after_timer>
+        <padding>0</padding>
+        <pos>
+            <x>600</x>
+            <y>300</y>
+        </pos>
+        <text>
+            <alpha>255</alpha>
+            <blue>255</blue>
+            <font>Consolas</font>
+            <fonts>
+
+            </fonts>
+            <green>255</green>
+            <red>255</red>
+            <size>12</size>
+            <stroke>
+                <alpha>255</alpha>
+                <blue>0</blue>
+                <green>0</green>
+                <red>0</red>
+                <width>0</width>
+            </stroke>
+        </text>
+        <timers_enabled>true</timers_enabled>
+    </global>
+    <linktri>
+        <pos>
+            <x>1329</x>
+            <y>161</y>
+        </pos>
+    </linktri>
+</settings>

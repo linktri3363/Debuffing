@@ -1,0 +1,2 @@
+# Per-user files the addon creates/rewrites itself (positions, overrides, profiles)
+data/*.xml

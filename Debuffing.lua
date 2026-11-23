@@ -1,6 +1,6 @@
 _addon.name     = 'Debuffing'
-_addon.author   = 'original: Auk, Overhauled by Nsane'
-_addon.version  = '2025.9.5'
+_addon.author   = 'original: Auk, Overhauled by Nsane, maintained by Linktri'
+_addon.version  = '2026.11.23'
 _addon.commands = {'df', 'debuffing'}
 
 require('luau')
@@ -8,6 +8,7 @@ local file    = require('files')
 local packets = require('packets')
 local texts   = require('texts')
 local config  = require('config')
+local bit     = require('bit')
 
 local res, windower = res, windower
 local player, simulation_mode = nil, false
@@ -68,8 +69,14 @@ local function colorize_absorb(fullname)
 end
 
 local frame_time, debuffed_mobs, TH, step_duration = 0, {}, {}, {}
+local purge_time = 0
+local add_seq = 0 -- insertion counter so the list keeps a stable order
+local function next_seq() add_seq = add_seq + 1; return add_seq end
 local durations, duration_profiles = {}, {}
 
+-- Optional per-spell overrides: [spell_id] = {effect=<buff id or {ids}>, duration=<secs>}.
+-- Empty by default; spells whose landed effect differs from res.spells are handled by the
+-- "effect from the action message" fallback in inc_action instead.
 local debuffs_map = {}
 local absorb_map = {
   [242]={effect=242,duration=90},[266]={effect=266,duration=90},[267]={effect=267,duration=90},[268]={effect=268,duration=90},
@@ -209,14 +216,16 @@ local function remove_debuff(target, effect, opts)
         if simulation_mode and player and target == player.id then return end
         if opts.no_hint then return end
         if not settings.keep_buff_after_timer then return end
+        -- Only real spells can be overridden with //df; skip steps, pacts, JA-style entries
+        local sid   = tonumber(e.id or 0) or 0
+        if sid <= 0 or type(e.name) ~= 'string' or JA_SPELLS:contains(sid) then return end
 
         local up    = math.max(0, os.clock() - e.expired_at)
         local base  = tonumber(e.base_dur or 0) or 0
         local total = math.max(0, math.floor(base + up + 0.5))
-        local clean = base_name((e.name or ''):gsub('\\cs%(%d+,%d+,%d+%)',''):gsub('\\cr',''))
-        local sid   = tonumber(e.id or 0)
+        local clean = base_name((e.name:gsub('\\cs%(%d+,%d+,%d+%)',''):gsub('\\cr','')))
 
-        if settings.auto_update_enabled and sid and sid > 0 then
+        if settings.auto_update_enabled then
             durations[owner_key] = durations[owner_key] or {}
             durations[owner_key].spells = durations[owner_key].spells or {}
             durations[owner_key].spells[tostring(sid)] = total
@@ -290,7 +299,20 @@ local function update_box()
         local out = 'Debuffs ['..tname..']'
         if TH[tid] then out = out..'\n- '..TH[tid] end
         if debuff_table then
+            -- Stable order: oldest application first (pairs() order shuffles between frames)
+            local ordered = {}
             for effect, sp in pairs(debuff_table) do
+                if type(sp) == 'table' then sp.seq = sp.seq or next_seq() end
+                ordered[#ordered+1] = { effect = effect, sp = sp }
+            end
+            table.sort(ordered, function(a, b)
+                local sa = type(a.sp) == 'table' and a.sp.seq or math.huge
+                local sb = type(b.sp) == 'table' and b.sp.seq or math.huge
+                if sa ~= sb then return sa < sb end
+                return tostring(a.effect) < tostring(b.effect)
+            end)
+            for _, row in ipairs(ordered) do
+                local effect, sp = row.effect, row.sp
                 if type(sp) == 'table' then
                     local remain = (sp.timer or 0) - os.clock()
                     if remain >= 0 then
@@ -348,19 +370,16 @@ local function handle_overwrites(target, new_spell_id, overwrites_list)
     return true
 end
 
-local function apply_debuff(target, effect, spell_id, duration)
+local function apply_debuff(target, effect, spell_id, duration, label_effect)
     if not debuffed_mobs[target] then debuffed_mobs[target] = {} end
-    if is_threnody_spell(spell_id) then
-        for eff, entry in pairs(debuffed_mobs[target]) do
-            if type(entry) == 'table' and entry.name and entry.name:find('Threnody') then remove_debuff(target, eff) end
-        end
-    end
+    -- Threnody replacement is handled inside handle_overwrites
     local overwrites = (res.spells[spell_id] and res.spells[spell_id].overwrites) or {}
     if not handle_overwrites(target, spell_id, overwrites) then return end
     local name = (others and others.blue_magic and others.blue_magic[spell_id] and others.blue_magic[spell_id].en)
               or (res.spells[spell_id] and res.spells[spell_id].en) or 'Unknown'
     debuffed_mobs[target][effect] = { id = spell_id, name = name, timer = os.clock() + (duration or 0), base_dur = tonumber(duration or 0) or 0, expired_at = nil }
-    if debuffs_map[spell_id] and type(debuffs_map[spell_id].effect) == 'table' then
+    local needs_label = label_effect or (debuffs_map[spell_id] and type(debuffs_map[spell_id].effect) == 'table')
+    if needs_label and res.buffs[effect] then
         debuffed_mobs[target][effect].name = name..' ('..res.buffs[effect].en..')'
     end
 end
@@ -486,8 +505,8 @@ local function inc_action(act)
                         if not conflict then
                             local s_status = bm and bm.status or (res.spells[spell] and res.spells[spell].status)
                             if s_status and s_status == msg_effect then
+                                -- (status messages carry the effect id, not damage, so no helix damage here)
                                 apply_debuff(tgt, msg_effect, act.param, duration)
-                                if is_helix_id(act.param) then helix_store_dmg(tgt, msg_effect, act.targets[i].actions[1].param, act.param) end
                             elseif debuffs_map[spell] and type(debuffs_map[spell].effect) == 'table' then
                                 for _, v in pairs(debuffs_map[spell].effect) do apply_debuff(tgt, v, act.param, duration) end
                             elseif debuffs_map[spell] then
@@ -499,6 +518,9 @@ local function inc_action(act)
                                 local e = absorb_map[spell].effect
                                 if type(e) == 'table' then for _,v in pairs(e) do apply_debuff(tgt, v, spell, duration) end
                                 else apply_debuff(tgt, e, spell, duration) end
+                            elseif msg_effect and msg_effect > 0 and res.buffs[msg_effect] then
+                                -- Fallback: trust the effect the server says landed (fixes "some debuffs not shown")
+                                apply_debuff(tgt, msg_effect, act.param, duration, s_status ~= nil)
                             end
                         end
                     elseif SUCCESS_GENERIC:contains(tmsg) then
@@ -549,8 +571,12 @@ local function inc_action(act)
                                       or (durations[owner_key] and durations[owner_key][owner] and durations[owner_key][owner][tostring(spell)])
                                       or (BloodPact_map[spell] and BloodPact_map[spell].duration)
                                       or 0
-                        debuffed_mobs[target] = debuffed_mobs[target] or {}
-                        debuffed_mobs[target][effect] = { name = res.job_abilities[spell].en..' ('..res.buffs[effect].en..')', timer = os.clock() + duration, base_dur = duration, expired_at = nil }
+                        local ja  = res.job_abilities[spell]
+                        local buf = effect and res.buffs[effect]
+                        if ja and buf then
+                            debuffed_mobs[target] = debuffed_mobs[target] or {}
+                            debuffed_mobs[target][effect] = { name = ja.en..' ('..buf.en..')', timer = os.clock() + duration, base_dur = duration, expired_at = nil }
+                        end
                     end
                 end
             end
@@ -593,19 +619,21 @@ local function inc_action(act)
         end
 
     elseif T{1,7,8,11}:contains(act.category) then
+        -- A mob that acts is no longer asleep/petrified/terrorized: clear all of those, not just the first.
+        -- 2 = sleep, 19 = sleep (Sleep II/Sleepga II/Repose), 7 = petrification, 28 = terror, 193 = lullaby
         if debuffed_mobs[act.actor_id] then
-            if     debuffed_mobs[act.actor_id][2]   then remove_debuff(act.actor_id, 2)
-            elseif debuffed_mobs[act.actor_id][7]   then remove_debuff(act.actor_id, 7)
-            elseif debuffed_mobs[act.actor_id][28]  then remove_debuff(act.actor_id, 28)
-            elseif debuffed_mobs[act.actor_id][193] then remove_debuff(act.actor_id, 193) end
+            for _, eff in ipairs({2, 19, 7, 28, 193}) do
+                if debuffed_mobs[act.actor_id] and debuffed_mobs[act.actor_id][eff] then remove_debuff(act.actor_id, eff) end
+            end
         end
         if act.category == 11 then
             for i = 1, #act.targets do
-                local msg = act.targets[i].actions[1].message
+                local t   = act.targets[i]
+                local msg = t.actions[1].message
                 if T{101}:contains(msg) then
-                    if ERASE_ABILITIES:contains(act.param) then clear_target_debuffs(act.targets[1].id) end
+                    if ERASE_ABILITIES:contains(act.param) then clear_target_debuffs(t.id) end
                 elseif T{159}:contains(msg) then
-                    if PARTIAL_ERASE_ABILITIES:contains(act.param) then remove_debuff(act.targets[1].id, act.targets[1].actions[1].param) end
+                    if PARTIAL_ERASE_ABILITIES:contains(act.param) then remove_debuff(t.id, t.actions[1].param) end
                 end
             end
         elseif act.category == 1 and act.targets[1].actions[1].has_add_effect and act.targets[1].actions[1].add_effect_message == 603 then
@@ -622,7 +650,7 @@ local function inc_action(act)
             local name = (res.job_abilities[spell] and res.job_abilities[spell].en) or 'Unknown'
             local actor = act.actor_id; local target = act.targets[1].id; local merit_name = name:lower()
             local override = (durations[owner_key] and durations[owner_key].spells and durations[owner_key].spells[tostring(spell)])
-                          or (durations[owner_key] and durations[owner_key][tostring(actor)] and durations[owner_key][tostring(spell)])
+                          or (durations[owner_key] and durations[owner_key][tostring(actor)] and durations[owner_key][tostring(actor)][tostring(spell)])
             local base  = (ja_map[spell] and ja_map[spell].duration) or 0
             local merit = (player and actor == player.id) and (30 + ((player.merits[merit_name] or 0)-1)*15) or nil
             local duration = override or merit or base
@@ -665,8 +693,28 @@ end
 windower.register_event('logout','zone change', function()
     debuffed_mobs = {}
     TH = {}
+    step_duration = {}
+    simulation_mode = false
     player = windower.ffxi.get_player()
 end)
+
+-- Drop all tracking for a mob that left without a death message (fled, depopped, swapped out)
+local function forget_mob(id)
+    if debuffed_mobs[id] then clear_target_debuffs(id, { no_hint = true }) end
+    TH[id] = nil
+    step_duration[id] = nil
+end
+
+-- Safety net: purge entries for mobs the client no longer knows about at all
+local function purge_missing_mobs()
+    local self_id = player and player.id
+    for id, _ in pairs(debuffed_mobs) do
+        if id ~= self_id and not windower.ffxi.get_mob_by_id(id) then forget_mob(id) end
+    end
+    for id, _ in pairs(TH) do
+        if not debuffed_mobs[id] and not windower.ffxi.get_mob_by_id(id) then TH[id] = nil end
+    end
+end
 
 windower.register_event('incoming chunk', function(id, data)
     if id == 0x028 then
@@ -676,13 +724,21 @@ windower.register_event('incoming chunk', function(id, data)
         inc_action_message(arr)
     elseif id == 0x00E then
         local packet = packets.parse('incoming', data)
-        if TH[packet['NPC']] and packet['Status'] == 0 and packet['HP %'] == 100 then TH[packet['NPC']] = nil end
+        local npc  = packet['NPC']
+        local mask = tonumber(packet['Mask']) or 0
+        -- 0x20 in the update mask = entity despawned; status 2/3 = dead/dying
+        if bit.band(mask, 0x20) ~= 0 or ((packet['Status'] == 2 or packet['Status'] == 3) and packet['HP %'] == 0) then
+            forget_mob(npc)
+        elseif TH[npc] and packet['Status'] == 0 and packet['HP %'] == 100 then
+            TH[npc] = nil
+        end
     end
 end)
 
 windower.register_event('prerender', function()
     local curr = os.clock()
     if curr > frame_time + 0.1 then frame_time = curr; update_box() end
+    if curr > purge_time + 5 then purge_time = curr; purge_missing_mobs() end
 end)
 
 windower.register_event('load','login', function()
@@ -786,21 +842,28 @@ windower.register_event('addon command', function(...)
         return bid,bname
     end
 
-    if not commands or not commands[1] then
-        log('Invalid command:')
-        log('//df|debuffing colors|timer [on|off]')
-        log('//df|debuffing auto [on|off]')
-        log('//df|debuffing auto_profiles [on|off]')
-        log('//df|debuffing keep_buff [on|off]')
-        log('//df|debuffing {Spell Name}|ID [seconds|remove]')
-        log('//df save <name> | //df load <name> | //df list | //df delete <name>')
-        log('//df reset | //df test clear | //df clear')
-        return
+    local function show_help()
+        log('Commands (//df or //debuffing):')
+        log('  help                         - this list')
+        log('  colors | timer [on|off]      - colored names / timers')
+        log('  keep_buff [on|off]           - keep expired debuffs with a +seconds counter')
+        log('  auto [on|off]                - auto-learn durations (also toggles keep_buff)')
+        log('  auto_profiles [on|off]       - per-main-job duration profiles')
+        log('  {Spell Name}|ID <secs|remove> - set/remove a duration override')
+        log('  save|load|delete <name>, list - duration profiles')
+        log('  reset                        - remove all overrides (profiles untouched)')
+        log('  test {Spell}|ID [dmg] [remove], test clear - simulate on yourself')
+        log('  clear                        - wipe all tracked debuffs')
     end
+
+    if not commands or not commands[1] then show_help(); return end
 
     local cmd = tostring(commands[1]):lower()
 
-    if cmd == 'keep_buff' then
+    if cmd == 'help' or cmd == 'h' or cmd == '?' then
+        show_help()
+
+    elseif cmd == 'keep_buff' then
         local v = tostring(commands[2] or ''):lower()
         if v == 'on' or v == 'true' or v == '1' then settings.keep_buff_after_timer = true
         elseif v == 'off' or v == 'false' or v == '0' then settings.keep_buff_after_timer = false
@@ -942,10 +1005,11 @@ windower.register_event('addon command', function(...)
     elseif cmd == 'clear' then
         local ids = {}; for tid,_ in pairs(debuffed_mobs) do ids[#ids+1] = tid end
         for _,tid in ipairs(ids) do clear_target_debuffs(tid, { no_hint = true }) end
+        TH = {}; step_duration = {}
         simulation_mode = false; log('All debuffs cleared')
 
     else
-        if #commands <= 1 then log('Invalid command: //df {Spell Name}|ID [seconds|remove]'); return end
+        if #commands <= 1 then log('Unknown command: '..cmd..' (try //df help)'); return end
         durations[owner_key] = durations[owner_key] or {}; durations[owner_key].spells = durations[owner_key].spells or {}
         local raw_query = table.concat(commands, ' ', 1, #commands - 1)
         local sid, sname = resolve_spell_id(raw_query); if not sid then log('Spell not found: incorrect spell name/id or outdated resources'); return end

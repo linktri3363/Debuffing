@@ -7,13 +7,27 @@ Left Default Profile, Right Custom Profile, was made for saboteur.
 <img width="272" height="227" alt="3" src="https://github.com/user-attachments/assets/12f4d834-6976-4050-ad9c-c2a4c560d81c" />
 <img width="271" height="190" alt="4" src="https://github.com/user-attachments/assets/f8647336-42bf-4b38-bac0-2194d5dcf5d8" />
 
-Some debuffs not showed.
+Debuffs whose landed effect differs from the spell's resource entry are now shown too (labelled with the effect name).
 
+## Credits
+Based on Xathe's *Debuffed*, then Auk's *Debuffing* and Nsane's overhaul. Maintained by Linktri. BSD 3-Clause, see `LICENSE`.
 
+## Changes in 2026.11.23
+- Fixed a crash with `keep_buff` on when JA-style elemental damage entries expired; timer hints/auto-learn now apply only to real spells.
+- Debuffs whose effect isn't in the spell's resource entry now show up (taken from the action message).
+- Sleep II / Sleepga II / Repose (sleep effect 19) now clear when the mob acts, and every sleep/petrify/terror entry clears, not just the first one.
+- Mobs that despawn without dying (flee, depop, swapped out) no longer keep stale debuffs.
+- The debuff list keeps a stable order (oldest first) instead of shuffling.
+- Erase-type abilities clear every target they hit; blood pacts with unknown effects no longer crash the addon.
+- Per-actor duration overrides for Angon/Tomahawk-type abilities are read correctly.
+- Step timers and TH reset on zone and on `//df clear`.
+- New `//df help`.
+- The files in `data/` are no longer tracked in git; the addon creates them on first load.
 
 # Debuffing — Command Reference
 
 **Prefix:** use `//df` or `//debuffing`. Auto-translate tokens are supported, e.g. `{Paralyze}`.
+Type `//df help` for the command list in game.
 
 ## GLOBAL DURATION OVERRIDES
 Set or remove a spell’s default duration for your character.
